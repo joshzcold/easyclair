@@ -1,9 +1,9 @@
 # easyclair
-bash script to start a clair scan easily 
+bash script to start a [clair](https://coreos.com/clair/docs/latest/) scan easily 
 
 *IMPORTANT:* clairdb needs to populate with vulnerabilites before you get an accurate result. I have a flag that waits for 30 minutes before starting a scan. This doesn't look into the database to confirm its done so if you can improve this pull requests are welcome 🙂
 
-By deafult this scripts keeps the clairdb running docker so that you don't have to repopulate it each time you do a scan.
+By default this script keeps the clairdb running in docker so that you don't have to repopulate it each time you do a scan.
 
 
 uses 4 docker images:
