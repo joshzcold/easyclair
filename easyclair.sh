@@ -1,14 +1,14 @@
 #!/bin/bash
 
-TEARDOWN=true
-SEARCH=""
-POSTGRES_PORT=5432
-CLAIR_API_PORT=6060
-CLAIR_HEALTH_PORT=6061
-REGISTRY_PORT=5000
-CLEAR_DATABASE=false
-DIR=$PWD
-WAIT_DB=false
+teardown=true
+search=""
+postgres_port=5432
+clair_api_port=6060
+clair_health_port=6061
+registry_port=5000
+clear_database=false
+working_dir="$(readlink -f .)"
+wait_db=false
 
 print_usage() {
 cat << EOF
@@ -57,15 +57,15 @@ if [[ ! "$(docker ps -q -f name=clairdb)" ]]; then
         docker container rm clairdb || true
     fi
     # run your container
-    docker run -d -e POSTGRES_PASSWORD="" --name clairdb -p ${POSTGRES_PORT}:5432 postgres:latest
+    docker run -d -e POSTGRES_PASSWORD="" --name clairdb -p ${postgres_port}:5432 postgres:latest
 else
    echo "clairdb is running" 	
 fi
 }
 
 startdb(){
-    docker run -d -e POSTGRES_PASSWORD="" --name clairdb -p ${POSTGRES_PORT}:5432 postgres:latest
-    until PGPASSWORD="" psql -h "localhost" -p ${POSTGRES_PORT} -U "postgres" -c '\q'; do
+    docker run -d -e POSTGRES_PASSWORD="" --name clairdb -p ${postgres_port}:5432 postgres:latest
+    until PGPASSWORD="" psql -h "localhost" -p ${postgres_port} -U "postgres" -c '\q'; do
   >&2 echo "Postgres is unavailable - checking until connection is good"
   sleep 1
 done
@@ -89,7 +89,7 @@ script will continue after the thirty minutes
 EOF
 
 secs=$((30 * 60))
-while [ $secs -gt 0 ]; do
+while [ "$secs" -gt 0 ]; do
    echo -ne "$secs\033[0K\r"
    sleep 1
    : $((secs--))
@@ -98,49 +98,49 @@ done
 
 setup(){
 #Create Directories
-mkdir -p $DIR/clair/config $DIR/clair/reports $DIR/clair/certs
+mkdir -p "${working_dir}"/clair/config "${working_dir}"/clair/reports "${working_dir}"/clair/certs
 
 #Run Services for clair
-docker run -d -p ${REGISTRY_PORT}:5000 \
+docker run -d -p "${registry_port}":5000 \
   --name clairreg \
   registry:latest
 
 
 #Create clair config file and directory
-cat <<EOT > ${DIR}/clair/config/clair.yaml
+cat <<EOT > "${working_dir}"/clair/config/clair.yaml
 clair:
   database:
     type: pgsql
     options:
-      source: host=localhost port=${POSTGRES_PORT} user=postgres sslmode=disable statement_timeout=60000
+      source: host=localhost port=${postgres_port} user=postgres sslmode=disable statement_timeout=60000
   api:
-    addr: "0.0.0.0:${CLAIR_API_PORT}"
-    healthaddr: "0.0.0.0:${CLAIR_HEALTH_PORT}"
+    addr: "0.0.0.0:${clair_api_port}"
+    healthaddr: "0.0.0.0:${clair_health_port}"
 EOT
 
 
-cat <<EOT > $DIR/clair/config/clairctl.yaml
+cat <<EOT > "${working_dir}"/clair/config/clairctl.yaml
 clair:
-  port: ${CLAIR_API_PORT}
-  healthPort: ${CLAIR_HEALTH_PORT}
+  port: ${clair_api_port}
+  healthPort: ${clair_health_port}
   uri: http://localhost
   report:
     path: /reports
     format: html
 docker:
   insecure-registries:
-    - "localhost:${REGISTRY_PORT}"
+    - "localhost:${registry_port}"
 EOT
 
 #Start Clairctl
 docker run --net=host -d --name clairctl \
--v ${DIR}/clair/reports:/reports:rw \
--v ${DIR}/clair/config:/config:ro \
+-v "${working_dir}"/clair/reports:/reports:rw \
+-v "${working_dir}"/clair/config:/config:ro \
 jgsqware/clairctl:master
 
 #Start Clair
-docker run  --net=host -d -p ${CLAIR_API_PORT}:6060 -p ${CLAIR_HEALTH_PORT}:6061 -v \
-	$DIR/clair/config:/config --name clair \
+docker run  --net=host -d -p "${clair_api_port}":6060 -p "${clair_health_port}":6061 -v \
+	"${working_dir}"/clair/config:/config --name clair \
 	quay.io/coreos/clair:latest \
 	-config=/config/clair.yaml \
 	-insecure-tls
@@ -150,37 +150,37 @@ docker run  --net=host -d -p ${CLAIR_API_PORT}:6060 -p ${CLAIR_HEALTH_PORT}:6061
 
 executeclair(){
 #Get local images and push them to local registry
-mapfile -t ARRAY <<< $(docker image ls | grep "${SEARCH}")
-for LINE in "${ARRAY[@]}"
+mapfile -t array <<< $(docker image ls | grep "${search}")
+for line in "${array[@]}"
 do
 	IFS=' '
-	read -ra FULL_REPO <<< "$LINE"
+	read -ra full_repo <<< "${line}"
 
-	TAG="${FULL_REPO[0]}:${FULL_REPO[1]}"
+	TAG="${full_repo[0]}:${full_repo[1]}"
 
 	IFS='/' # / is set as delimiter
-	read -ra ADDR <<< "${FULL_REPO[0]}" # str is read into an array as tokens separated by IFS
-    	IMAGENAME="${ADDR[-1]}"
+	read -ra addr <<< "${full_repo[0]}" # str is read into an array as tokens separated by IFS
+    	image_name="${addr[-1]}"
 
-	echo "IMAGE NAME: $IMAGENAME"
-docker tag "$TAG" localhost:${REGISTRY_PORT}/"${IMAGENAME}:latest"
-PUSH+=("localhost:${REGISTRY_PORT}/${IMAGENAME}:latest")
+	echo "IMAGE NAME: ${image_name}"
+docker tag "${TAG}" localhost:"${registry_port}"/"${image_name}:latest"
+push+=("localhost:${registry_port}/${image_name}:latest")
 done
 
-for IMG in "${PUSH[@]}"
+for img in "${push[@]}"
 do
-docker push "$IMG"
+docker push "${img}"
 done
 
 
 #Push to Clair
-for SCAN in "${PUSH[@]}"
+for scan in "${push[@]}"
 do
-docker exec -t clairctl clairctl --config /config/clairctl.yaml push "$SCAN"
-docker exec -t clairctl clairctl --config /config/clairctl.yaml analyze "$SCAN"
-docker exec -t clairctl clairctl --config /config/clairctl.yaml report "$SCAN"
-docker exec -t clairctl clairctl --config /config/clairctl.yaml report "$SCAN" --format json
-docker exec -t clairctl clairctl --config /config/clairctl.yaml delete "$SCAN"
+docker exec -t clairctl clairctl --config /config/clairctl.yaml push "${scan}"
+docker exec -t clairctl clairctl --config /config/clairctl.yaml analyze "${scan}"
+docker exec -t clairctl clairctl --config /config/clairctl.yaml report "${scan}"
+docker exec -t clairctl clairctl --config /config/clairctl.yaml report "${scan}" --format json
+docker exec -t clairctl clairctl --config /config/clairctl.yaml delete "${scan}"
 done	
 }
 
@@ -192,21 +192,21 @@ while getopts "hnd:s:-:" optchar; do
 			exit
 			;;
 		n)
-			TEARDOWN=false
-			echo "teardown $TEARDOWN"
+			teardown=false
+			echo "teardown ${teardown}"
 			;;
 		d)
-			if [[ -d "$OPTARG" ]]; then
-			 DIR=$OPTARG
-			 echo "working directory $DIR"
+			if [[ -d "${OPTARG}" ]]; then
+        working_dir="$(readlink -f "${OPTARG}")"
+			 echo "working directory ${working_dir}"
 		  	else
 			 echo "-d parameter: working directory is invalid"
 		 	 exit	 
 			fi
 			;;
 		s)
-			SEARCH="$OPTARG"
-			echo "search term $SEARCH"
+			search="${OPTARG}"
+			echo "search term ${search}"
 			;;
 		-)
 			case "${OPTARG}" in
@@ -216,35 +216,35 @@ while getopts "hnd:s:-:" optchar; do
                    		 ;;
                 		postgres-port)
 		                    val="${!OPTIND}"; OPTIND=$(( $OPTIND + 1 ))
-                		    POSTGRES_PORT=${val}
-                		    echo "postgres port $POSTGRES_PORT"
+                		    postgres_port=${val}
+                		    echo "postgres port ${postgres_port}"
                    		 ;;
                 		clair-api-port)
 		                    val="${!OPTIND}"; OPTIND=$(( $OPTIND + 1 ))
-                		    CLAIR_API_PORT=${val}
-                		    echo "clair api port $CLAIR_API_PORT"
+                		    clair_api_port=${val}
+                		    echo "clair api port ${clair_api_port}"
                    		 ;;
                 		clair-health-port)
 		                    val="${!OPTIND}"; OPTIND=$(( $OPTIND + 1 ))
-                		    CLAIR_HEALTH_PORT=${val}
-                		    echo "clair health port $CLAIR_HEALTH_PORT"
+                		    clair_health_port=${val}
+                		    echo "clair health port ${clair_health_port}"
                    		 ;;
                 		registry-port)
 		                    val="${!OPTIND}"; OPTIND=$(( $OPTIND + 1 ))
-                		    REGISTRY_PORT=${val}
-                		    echo "registry port $REGISTRY_PORT"
+                		    registry_port=${val}
+                		    echo "registry port ${registry_port}"
                    		 ;;
                 		clear-database)
-		                    CLEAR_DATABASE=true
-                		    echo "clear database $CLEAR_DATABASE"
+		                    clear_database=true
+                		    echo "clear database ${clear_database}"
                    		 ;;
 
                 		wait-for-db)
-		                    WAIT_DB=true
-                		    echo "WAIT_DB is $WAIT_DB"
+		                    wait_db=true
+                		    echo "wait_db is ${wait_db}"
                    		 ;;
                			 *)
-                   			 if [[ "$OPTERR" = 1 ]] && [[ "${optspec:0:1}" != ":" ]]; then
+                   			 if [[ "${OPTERR}" = 1 ]] && [[ "${optspec:0:1}" != ":" ]]; then
                       			 echo "Unknown option --${OPTARG}" >&2
                       			 print_usage
 					 exit
@@ -261,7 +261,7 @@ while getopts "hnd:s:-:" optchar; do
 	esac
 done
 
-if [[ "$CLEAR_DATABASE" = true ]]
+if [[ "${clear_database}" = "true" ]]
 then
 	cleanup-deletedb
 	startdb
@@ -269,7 +269,7 @@ else
 	cleanup
 fi
 
-if [[ "$WAIT_DB" = true ]]
+if [[ "${wait_db}" = "true" ]]
 then
 	waitforclairsetup
 fi
@@ -277,16 +277,16 @@ fi
 setup
 executeclair
 
-if [[ "$TEARDOWN" = true ]] && [[ "$CLEAR_DATABASE" = true ]]
+if [[ "${teardown}" = "true" ]] && [[ "${clear_database}" = "true" ]]
 then
 	cleanup-deletedb
 	echo "Cleared clairdb"
-elif [[ "$TEARDOWN" = true ]] 
+elif [[ "${teardown}" = "true" ]] 
 then
 	cleanup
 else
 	echo "kept docker containers running"
 fi
 
-echo "analysis done, reports will be stored at  $DIR/clair/reports"
+echo "analysis done, reports will be stored at  ${working_dir}/clair/reports"
 exit

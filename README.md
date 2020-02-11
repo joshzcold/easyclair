@@ -12,6 +12,10 @@ uses 4 docker images:
  - registry:latest [link](https://hub.docker.com/_/registry)
  - postgres:latest [link](https://hub.docker.com/_/postgres)
 
+## Dependencies
+- Docker `docker version`
+- psql `psql --version` This is included in postgres installation. probably could be removed in a feature improvement
+
 ## Usage
 ```
 usage: easyclair
