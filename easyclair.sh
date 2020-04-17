@@ -269,12 +269,13 @@ else
 	cleanup
 fi
 
+setup
+
 if [[ "${wait_db}" = "true" ]]
 then
 	waitforclairsetup
 fi
 
-setup
 executeclair
 
 if [[ "${teardown}" = "true" ]] && [[ "${clear_database}" = "true" ]]
